@@ -57,12 +57,11 @@ public class FloatService extends Service {
     private void injectThenLaunch() {
         sleep(800); // let overlay render on main thread first
 
-        // 1) Launch CODM if not running
+        // 1) Wait for CODM (launched by MainActivity before service start)
         String pid = MemPatcher.getPid();
         if (pid == null) {
-            updateStatus("Opening CODM...", 0xFFFFAA00);
-            launchCODM();
-            Log.i(TAG, "Waiting for CODM...");
+            updateStatus("Waiting for CODM…", 0xFFFFAA00);
+            Log.i(TAG, "Waiting for CODM to start...");
             for (int t = 0; t < 60 && pid == null; t++) {
                 sleep(1000);
                 pid = MemPatcher.getPid();

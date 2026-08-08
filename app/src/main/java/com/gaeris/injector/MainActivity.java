@@ -78,6 +78,8 @@ public class MainActivity extends Activity {
         return root;
     }
 
+    private static final String GAME = "com.garena.game.codm";
+
     private void launch() {
         if (!Settings.canDrawOverlays(this)) {
             startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -85,10 +87,39 @@ public class MainActivity extends Activity {
             setStatus("Grant overlay permission, then tap LAUNCH again.", 0xFFFFAA00);
             return;
         }
+
+        // 1) Start FloatService (overlay)
         Intent svc = new Intent(this, FloatService.class);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc);
         else                             startService(svc);
-        setStatus("✔  Menu launched — switch to CODM", 0xFF4CAF50);
+
+        // 2) Launch CODM from Activity context (NOT from Service —
+        //    Android 10+ blocks startActivity() from background services).
+        //    Activity context has full permission to bring CODM to foreground.
+        boolean launched = launchGame();
+        setStatus(launched
+            ? "✔  Opening CODM + injecting…"
+            : "✔  Menu started  •  Open CODM manually", 0xFF4CAF50);
+    }
+
+    private boolean launchGame() {
+        // Primary: standard launcher intent
+        Intent intent = getPackageManager().getLaunchIntentForPackage(GAME);
+        if (intent == null) {
+            // Fallback: explicit Garena/Unity main activity
+            intent = new Intent(Intent.ACTION_MAIN);
+            intent.setClassName(GAME, GAME + ".UnityPlayerActivity");
+            intent.addCategory(Intent.CATEGORY_LAUNCHER);
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                      | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        try {
+            startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            setStatus("✖  Cannot open CODM: " + e.getMessage(), 0xFFFF3B3B);
+            return false;
+        }
     }
 
     private void checkStatus() {
