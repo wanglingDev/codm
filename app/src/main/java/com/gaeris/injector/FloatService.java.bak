@@ -28,7 +28,6 @@ public class FloatService extends Service {
     // ── inject state ─────────────────────────────────────────────────────────
     private volatile boolean injected      = false;
     private volatile String  injectedPid   = null;
-    private volatile TextView tvInjectStatus = null; // live status line in overlay
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -39,9 +38,7 @@ public class FloatService extends Service {
 
     @Override public int onStartCommand(Intent i, int flags, int id) {
         startFg();
-        // Android 15+ requires overlay to be VISIBLE before/during foreground
-        // service lifecycle. Show immediately, then inject in background.
-        showOverlay();
+        // Inject first, then launch CODM, then show overlay
         new Thread(this::injectThenLaunch).start();
         return START_STICKY;
     }
@@ -52,17 +49,16 @@ public class FloatService extends Service {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    //  INJECT → status updates live in overlay (shown before this runs)
+    //  INJECT → LAUNCH → SHOW OVERLAY (sequential)
     // ════════════════════════════════════════════════════════════════════════
     private void injectThenLaunch() {
-        sleep(800); // let overlay render on main thread first
-
-        // 1) Launch CODM if not running
+        // 1) Check if game already running
         String pid = MemPatcher.getPid();
+
         if (pid == null) {
-            updateStatus("Opening CODM...", 0xFFFFAA00);
+            // Launch CODM first, then wait for it
             launchCODM();
-            Log.i(TAG, "Waiting for CODM...");
+            Log.i(TAG, "Waiting for CODM to start...");
             for (int t = 0; t < 60 && pid == null; t++) {
                 sleep(1000);
                 pid = MemPatcher.getPid();
@@ -70,12 +66,13 @@ public class FloatService extends Service {
         }
 
         if (pid == null) {
-            updateStatus("✖  CODM not found (60s)", 0xFFFF3B3B);
+            showToast("CODM not found after 60s");
+            showOverlay();
             return;
         }
 
-        updateStatus("Injecting… PID " + pid, 0xFFFFAA00);
         Log.i(TAG, "Game PID=" + pid + " — injecting");
+        showToast("Injecting...");
 
         // 2) Inject all features
         boolean anyOk = false;
@@ -92,44 +89,22 @@ public class FloatService extends Service {
         }
 
         injected    = anyOk;
-        injectedPid = anyOk ? pid : null;
+        injectedPid = pid;
 
-        if (anyOk) {
-            updateStatus("✔  Injected — PID " + pid, 0xFF4CAF50);
-            refreshSwitches();
-        } else {
-            updateStatus("✖  Inject failed — check root", 0xFFFF3B3B);
-        }
-    }
+        showToast(anyOk ? "Injected! Switch to CODM" : "Inject failed — check root");
 
-    // Update the status TextView in the overlay (safe from any thread)
-    private void updateStatus(String msg, int color) {
-        Log.i(TAG, "Status: " + msg);
-        TextView tv = tvInjectStatus;
-        if (tv != null) tv.post(() -> {
-            tv.setText(msg);
-            tv.setTextColor(color);
-        });
+        // 3) Show floating overlay
+        showOverlay();
     }
 
     private void launchCODM() {
-        // Primary: standard launch intent
         Intent intent = getPackageManager().getLaunchIntentForPackage(GAME);
-        if (intent == null) {
-            // Fallback: explicit Garena main activity (some Garena variants
-            // hide the launcher intent from getLaunchIntentForPackage)
-            intent = new Intent(Intent.ACTION_MAIN);
-            intent.setClassName(GAME, GAME + ".UnityPlayerActivity");
-            intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                      | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-        try {
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
             Log.i(TAG, "CODM launched");
-        } catch (Exception e) {
-            Log.e(TAG, "launchCODM failed: " + e.getMessage());
-            updateStatus("✖  Cannot launch CODM", 0xFFFF3B3B);
+        } else {
+            showToast("CODM not installed");
         }
     }
 
@@ -258,10 +233,9 @@ public class FloatService extends Service {
         TextView statusTv = new TextView(ctx);
         statusTv.setText(injected
             ? "✔  Injected — PID " + injectedPid
-            : "✖  Waiting…");
-        statusTv.setTextColor(injected ? 0xFF4CAF50 : 0xFFFFAA00);
+            : "✖  Not injected");
+        statusTv.setTextColor(injected ? 0xFF4CAF50 : 0xFFFF3B3B);
         statusTv.setTextSize(10);
-        tvInjectStatus = statusTv; // live reference for updateStatus()
         LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         statusRow.addView(statusTv, sLp);
