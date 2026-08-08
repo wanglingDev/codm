@@ -13,6 +13,15 @@ android {
         versionCode 1
         versionName "1.0"
         ndk { abiFilters "arm64-v8a" }
+        externalNativeBuild {
+            cmake { arguments "-DANDROID_STL=none" }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+        }
     }
 
     buildTypes {
@@ -25,6 +34,13 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // include the patcher binary in assets
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+        }
     }
 }
 
