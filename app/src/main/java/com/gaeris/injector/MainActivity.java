@@ -154,7 +154,7 @@ public class MainActivity extends Activity {
 
     private boolean checkRoot() {
         try {
-            Process p = Runtime.getRuntime().exec(new String[]{"su","-c","id"});
+            java.lang.Process p = Runtime.getRuntime().exec(new String[]{"su","-c","id"});
             java.io.BufferedReader r = new java.io.BufferedReader(
                 new java.io.InputStreamReader(p.getInputStream()));
             String out = r.readLine();
