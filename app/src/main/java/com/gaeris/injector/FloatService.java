@@ -2,6 +2,7 @@ package com.gaeris.injector;
 
 import android.app.*;
 import android.content.*;
+import android.content.pm.ServiceInfo;
 import android.graphics.*;
 import android.graphics.drawable.*;
 import android.os.*;
@@ -17,7 +18,6 @@ public class FloatService extends Service {
     private WindowManager wm;
     private View          rootView;
     private WindowManager.LayoutParams params;
-    private boolean[]     states;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -25,11 +25,20 @@ public class FloatService extends Service {
         createNotificationChannel();
         Notification n = new NotificationCompat.Builder(this, CH)
             .setContentTitle("GAERIS Active")
+            .setContentText("Floating menu is running")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build();
-        startForeground(1, n);
-        showFloatMenu();
+
+        // Android 14+ requires the type argument
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(1, n);
+        }
+
+        // Post to main looper so WindowManager is ready
+        new Handler(Looper.getMainLooper()).post(this::showFloatMenu);
         return START_NOT_STICKY;
     }
 
@@ -40,12 +49,14 @@ public class FloatService extends Service {
         super.onDestroy();
     }
 
-    // ── floating window ───────────────────────────────────────────────────
     private void showFloatMenu() {
-        wm     = (WindowManager) getSystemService(WINDOW_SERVICE);
-        states = new boolean[Feature.ALL.length];
+        wm = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        rootView = buildUI();
+        // Use a themed context so Switch and other widgets render correctly
+        Context themed = new ContextThemeWrapper(this,
+            android.R.style.Theme_Material);
+
+        rootView = buildUI(themed);
 
         params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -53,63 +64,66 @@ public class FloatService extends Service {
             Build.VERSION.SDK_INT >= 26
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
-            // NOT_FOCUSABLE: game keeps keyboard focus; touch inside window works
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 40; params.y = 120;
+        params.x = 40;
+        params.y = 120;
 
-        wm.addView(rootView, params);
+        try {
+            wm.addView(rootView, params);
+        } catch (Exception e) {
+            Log.e(TAG, "addView failed: " + e);
+        }
     }
 
-    private View buildUI() {
-        Context ctx = this;
+    private View buildUI(Context ctx) {
+        int PAD = dp(ctx, 10);
 
-        // ── container ────────────────────────────────────────────────────
+        // root container
         LinearLayout root = new LinearLayout(ctx);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundDrawable(rounded(0xFF0D0D0D, 24));
+        root.setBackground(rounded(0xEE0D0D0D, dp(ctx, 16)));
 
-        // ── title bar ────────────────────────────────────────────────────
+        // ── title bar (drag handle) ───────────────────────────────────────
         LinearLayout bar = new LinearLayout(ctx);
         bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setPadding(dp(12), dp(8), dp(12), dp(8));
-        bar.setBackgroundDrawable(rounded(0xFF1A1A1A, 24));
+        bar.setPadding(PAD, dp(ctx, 8), PAD, dp(ctx, 8));
+        bar.setBackground(rounded(0xFF1A1A1A, dp(ctx, 16)));
 
         TextView title = new TextView(ctx);
         title.setText("⬡  GAERIS  v1.0");
         title.setTextColor(0xFFFF3B3B);
         title.setTextSize(13);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
-            LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        bar.addView(title, lp);
+        bar.addView(title, new LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView close = new TextView(ctx);
-        close.setText("✕");
-        close.setTextColor(0xFF888888);
-        close.setTextSize(16);
-        close.setPadding(dp(8), 0, 0, 0);
-        close.setOnClickListener(v -> stopSelf());
-        bar.addView(close);
+        TextView closeBtn = new TextView(ctx);
+        closeBtn.setText("  ✕  ");
+        closeBtn.setTextColor(0xFF888888);
+        closeBtn.setTextSize(15);
+        closeBtn.setOnClickListener(v -> stopSelf());
+        bar.addView(closeBtn);
 
-        root.addView(bar);
+        root.addView(bar, new LinearLayout.LayoutParams(
+            dp(ctx, 290), LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        // drag the title bar
         bar.setOnTouchListener(new DragListener());
 
-        // ── divider ──────────────────────────────────────────────────────
+        // ── red divider ───────────────────────────────────────────────────
         View div = new View(ctx);
-        div.setBackgroundColor(0x44FF3B3B);
+        div.setBackgroundColor(0x55FF3B3B);
         root.addView(div, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+            LinearLayout.LayoutParams.MATCH_PARENT, 1));
 
-        // ── feature rows ─────────────────────────────────────────────────
-        ScrollView scroll = new ScrollView(ctx);
+        // ── feature switches ──────────────────────────────────────────────
         LinearLayout list = new LinearLayout(ctx);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(dp(10), dp(6), dp(10), dp(10));
+        list.setPadding(PAD, dp(ctx, 4), PAD, dp(ctx, 8));
 
         for (int i = 0; i < Feature.ALL.length; i++) {
             final Feature f   = Feature.ALL[i];
@@ -117,25 +131,25 @@ public class FloatService extends Service {
 
             LinearLayout row = new LinearLayout(ctx);
             row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(dp(8), dp(6), dp(8), dp(6));
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(ctx, 6), dp(ctx, 8), dp(ctx, 6), dp(ctx, 8));
 
-            // text column
+            // text
             LinearLayout textCol = new LinearLayout(ctx);
             textCol.setOrientation(LinearLayout.VERTICAL);
-            LinearLayout.LayoutParams tcLp = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            textCol.setLayoutParams(tcLp);
+            textCol.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
             TextView tName = new TextView(ctx);
             tName.setText(f.name);
-            tName.setTextColor(0xFFFFFFFF);
+            tName.setTextColor(0xFFEEEEEE);
             tName.setTextSize(13);
             tName.setTypeface(Typeface.DEFAULT_BOLD);
             textCol.addView(tName);
 
             TextView tDesc = new TextView(ctx);
             tDesc.setText(f.desc);
-            tDesc.setTextColor(0xFF777777);
+            tDesc.setTextColor(0xFF666666);
             tDesc.setTextSize(10);
             textCol.addView(tDesc);
 
@@ -144,57 +158,46 @@ public class FloatService extends Service {
             // switch
             Switch sw = new Switch(ctx);
             sw.setChecked(false);
-            sw.setOnCheckedChangeListener((v, checked) -> {
-                states[idx] = checked;
-                new Thread(() -> {
-                    boolean ok = MemPatcher.patchAll(f.patches);
-                    Log.i(TAG, f.name + " -> " + checked + " | ok=" + ok);
-                }).start();
-            });
+            sw.setOnCheckedChangeListener((v, on) ->
+                new Thread(() -> MemPatcher.patchAll(f.patches)).start());
             row.addView(sw);
 
             list.addView(row);
 
-            // thin separator
             if (i < Feature.ALL.length - 1) {
                 View sep = new View(ctx);
-                sep.setBackgroundColor(0x22FFFFFF);
+                sep.setBackgroundColor(0x1AFFFFFF);
                 list.addView(sep, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 1));
             }
         }
 
+        ScrollView scroll = new ScrollView(ctx);
         scroll.addView(list);
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
-            dp(280), dp(340));
-        root.addView(scroll, scrollLp);
+        root.addView(scroll, new LinearLayout.LayoutParams(
+            dp(ctx, 290), dp(ctx, 320)));
+
         return root;
     }
 
-    // ── drag touch listener ───────────────────────────────────────────────
+    // ── drag ─────────────────────────────────────────────────────────────────
     private class DragListener implements View.OnTouchListener {
-        float startX, startY;
-        int   initX, initY;
-
+        float sx, sy; int ix, iy;
         @Override public boolean onTouch(View v, MotionEvent e) {
-            switch (e.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    startX = e.getRawX(); startY = e.getRawY();
-                    initX  = params.x;    initY  = params.y;
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    params.x = initX + (int)(e.getRawX() - startX);
-                    params.y = initY + (int)(e.getRawY() - startY);
-                    wm.updateViewLayout(rootView, params);
-                    return true;
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                sx=e.getRawX(); sy=e.getRawY(); ix=params.x; iy=params.y;
+            } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                params.x = ix + (int)(e.getRawX()-sx);
+                params.y = iy + (int)(e.getRawY()-sy);
+                wm.updateViewLayout(rootView, params);
             }
-            return false;
+            return true;
         }
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────
-    private int dp(int v) {
-        return (int)(v * getResources().getDisplayMetrics().density);
+    // ── helpers ───────────────────────────────────────────────────────────────
+    private static int dp(Context ctx, int v) {
+        return Math.round(v * ctx.getResources().getDisplayMetrics().density);
     }
 
     private static GradientDrawable rounded(int color, int radius) {
